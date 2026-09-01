@@ -7,7 +7,7 @@
 // answers into one final, coherent reply. If one provider fails, we
 // fall back to the other provider's answer alone.
 
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
 const MISTRAL_MODEL = 'mistral-large-latest';
 
 async function callGroq(apiKey, system, userText) {
