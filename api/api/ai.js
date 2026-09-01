@@ -2,13 +2,19 @@
 // The browser never sees any API key: the key lives only in the
 // OPENROUTER_API_KEY environment variable set on Vercel.
 //
-// Strategy: single call to one free OpenRouter model (DeepSeek).
+// Strategy: single call to one free OpenRouter model (OpenAI's
+// open-weight gpt-oss model — the free GPT option on OpenRouter),
+// with one free-model fallback in case the primary gets rate
+// limited or delisted. Still just one serverless function.
 // No parallel calls, no synthesis step — kept as lean as possible.
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-// Single free OpenRouter model used for everything.
-const MODEL = 'deepseek/deepseek-chat-v3-0324:free';
+// Try this model first; if it fails, fall back to the next one.
+const MODELS = [
+  'openai/gpt-oss-20b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+];
 
 async function callOpenRouter(apiKey, model, system, userText) {
   const resp = await fetch(OPENROUTER_URL, {
@@ -60,7 +66,20 @@ module.exports = async (req, res) => {
   const userText = messages[messages.length - 1].content || '';
 
   try {
-    const finalText = await callOpenRouter(apiKey, MODEL, system, userText);
+    let finalText = '';
+    let lastErr;
+    for (const model of MODELS) {
+      try {
+        finalText = await callOpenRouter(apiKey, model, system, userText);
+        if (finalText && finalText.trim()) break;
+      } catch (err) {
+        lastErr = err;
+        console.error(`Model ${model} failed, trying next fallback`, err);
+      }
+    }
+    if (!finalText || !finalText.trim()) {
+      throw lastErr || new Error('All models failed');
+    }
 
     // Keep the same response shape the front-end already expects
     // (an array of Anthropic-style content blocks).
