@@ -2,20 +2,13 @@
 // The browser never sees any API key: the key lives only in the
 // OPENROUTER_API_KEY environment variable set on Vercel.
 //
-// Strategy: fire the user's question at two different free models on
-// OpenRouter in parallel, then ask one of them to synthesize both
-// answers into one final, coherent reply. If one model fails, we
-// fall back to the other model's answer alone.
+// Strategy: single call to one free OpenRouter model (DeepSeek).
+// No parallel calls, no synthesis step — kept as lean as possible.
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
-// Two different free OpenRouter models used for the two parallel drafts.
-// Swap these for any other ":free" model slugs from openrouter.ai/models.
-const MODEL_A = 'meta-llama/llama-3.3-70b-instruct:free';
-const MODEL_B = 'deepseek/deepseek-chat-v3-0324:free';
-
-// Model used for the synthesis step (merging the two drafts).
-const SYNTHESIS_MODEL = MODEL_A;
+// Single free OpenRouter model used for everything.
+const MODEL = 'deepseek/deepseek-chat-v3-0324:free';
 
 async function callOpenRouter(apiKey, model, system, userText) {
   const resp = await fetch(OPENROUTER_URL, {
@@ -67,35 +60,7 @@ module.exports = async (req, res) => {
   const userText = messages[messages.length - 1].content || '';
 
   try {
-    const jobs = [
-      callOpenRouter(apiKey, MODEL_A, system, userText).then(text => ({ from: 'A', text })).catch(err => ({ from: 'A', error: err })),
-      callOpenRouter(apiKey, MODEL_B, system, userText).then(text => ({ from: 'B', text })).catch(err => ({ from: 'B', error: err })),
-    ];
-
-    const results = await Promise.all(jobs);
-    const ok = results.filter(r => r.text && r.text.trim());
-    results.filter(r => r.error).forEach(r => console.error(`Model ${r.from} failed`, r.error));
-
-    if (ok.length === 0) {
-      res.status(502).json({ error: 'Both AI models failed' });
-      return;
-    }
-
-    let finalText;
-    if (ok.length === 1) {
-      // Only one model answered — use it directly, no synthesis needed.
-      finalText = ok[0].text;
-    } else {
-      // Both answered — merge them into one coherent answer.
-      const synthesisSystem = `${system}\n\nYou will be given two draft answers to the same question from two different AI models. Merge them into a single best final answer: combine complementary details, resolve any contradictions using your best judgment, remove redundancy, and present it as one clean, well-structured answer. Do not mention that there were multiple drafts or name the source models.`;
-      const synthesisUser = `User's question: ${userText}\n\n--- Draft answer A ---\n${ok[0].text}\n\n--- Draft answer B ---\n${ok[1].text}\n\nWrite the single merged final answer now.`;
-      try {
-        finalText = await callOpenRouter(apiKey, SYNTHESIS_MODEL, synthesisSystem, synthesisUser);
-      } catch (err) {
-        console.error('Synthesis step failed, falling back to the first draft', err);
-        finalText = ok[0].text;
-      }
-    }
+    const finalText = await callOpenRouter(apiKey, MODEL, system, userText);
 
     // Keep the same response shape the front-end already expects
     // (an array of Anthropic-style content blocks).
